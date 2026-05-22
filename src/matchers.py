@@ -33,20 +33,21 @@ class FeatureMatcher:
             self.matching_sg = None
     
     def match_nn(self, img1_path, img2_path):
-        """SP + NN (load_image 대신 cv2 사용으로 좌표계 통일)"""
-        # SuperGlue와 동일하게 cv2로 읽고 텐서 변환
-        img1 = cv2.imread(img1_path, cv2.IMREAD_GRAYSCALE)
-        img2 = cv2.imread(img2_path, cv2.IMREAD_GRAYSCALE)
+        img1_orig = cv2.imread(img1_path, cv2.IMREAD_GRAYSCALE)
+        img2_orig = cv2.imread(img2_path, cv2.IMREAD_GRAYSCALE)
         
-        # SuperPoint 입력을 위한 텐서 정규화 (1, 1, H, W)
-        t1 = torch.from_numpy(img1/255.).float()[None, None].to(self.device)
-        t2 = torch.from_numpy(img2/255.).float()[None, None].to(self.device)
+        scale1 = 640.0 / max(img1_orig.shape[:2])
+        scale2 = 640.0 / max(img2_orig.shape[:2])
+        img1_scaled = cv2.resize(img1_orig, (int(img1_orig.shape[1]*scale1), int(img1_orig.shape[0]*scale1)))
+        img2_scaled = cv2.resize(img2_orig, (int(img2_orig.shape[1]*scale2), int(img2_orig.shape[0]*scale2)))
+        
+        t1 = torch.from_numpy(img1_scaled/255.).float()[None, None].to(self.device)
+        t2 = torch.from_numpy(img2_scaled/255.).float()[None, None].to(self.device)
         
         if self.device.type == 'cuda': torch.cuda.synchronize()
         t0 = time.time()
         
         with torch.no_grad():
-            # LightGlue의 SuperPoint 추출기는 딕셔너리 입력을 받으므로 변조
             f0 = self.extractor_sp({'image': t1})
             f1 = self.extractor_sp({'image': t2})
             f0, f1 = rbd(f0), rbd(f1)
@@ -56,45 +57,37 @@ class FeatureMatcher:
         desc0 = f0['descriptors'].cpu().numpy()
         desc1 = f1['descriptors'].cpu().numpy()
         
-        if desc0.ndim == 1: desc0 = desc0.reshape(1, -1)
-        elif desc0.shape[0] == 256: desc0 = desc0.T
-        if desc1.ndim == 1: desc1 = desc1.reshape(1, -1)
-        elif desc1.shape[0] == 256: desc1 = desc1.T
-        
-        d0 = np.ascontiguousarray(desc0, dtype=np.float32)
-        d1 = np.ascontiguousarray(desc1, dtype=np.float32)
-        
         bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
-        matches = bf.match(d0, d1)
+        matches = bf.match(np.ascontiguousarray(desc0.T, dtype=np.float32), np.ascontiguousarray(desc1.T, dtype=np.float32))
         
         if self.device.type == 'cuda': torch.cuda.synchronize()
         elapsed = time.time() - t0
         
-        if len(matches) == 0:
-            return np.zeros((0,2)), np.zeros((0,2)), elapsed
+        if len(matches) == 0: return np.zeros((0,2)), np.zeros((0,2)), elapsed
         
+        # 💡 640px 해상도 좌표 그대로 반환
         pts1 = np.float32([kp0[m.queryIdx] for m in matches])
         pts2 = np.float32([kp1[m.trainIdx] for m in matches])
-        
         return pts1, pts2, elapsed
-    
+
     def match_superglue(self, img1_path, img2_path):
-        """SP + SuperGlue"""
-        if self.matching_sg is None:
-            raise RuntimeError("SuperGlue not available. Run: git clone https://github.com/magicleap/SuperGluePretrainedNetwork.git models/SuperGlue")
+        img1_orig = cv2.imread(img1_path, cv2.IMREAD_GRAYSCALE)
+        img2_orig = cv2.imread(img2_path, cv2.IMREAD_GRAYSCALE)
         
-        img1 = cv2.imread(img1_path, cv2.IMREAD_GRAYSCALE)
-        img2 = cv2.imread(img2_path, cv2.IMREAD_GRAYSCALE)
+        scale1 = 640.0 / max(img1_orig.shape[:2])
+        scale2 = 640.0 / max(img2_orig.shape[:2])
+        img1_scaled = cv2.resize(img1_orig, (int(img1_orig.shape[1]*scale1), int(img1_orig.shape[0]*scale1)))
+        img2_scaled = cv2.resize(img2_orig, (int(img2_orig.shape[1]*scale2), int(img2_orig.shape[0]*scale2)))
         
-        t1 = torch.from_numpy(img1/255.).float()[None, None].to(self.device)
-        t2 = torch.from_numpy(img2/255.).float()[None, None].to(self.device)
+        t1 = torch.from_numpy(img1_scaled/255.).float()[None, None].to(self.device)
+        t2 = torch.from_numpy(img2_scaled/255.).float()[None, None].to(self.device)
         
         if self.device.type == 'cuda': torch.cuda.synchronize()
         t0 = time.time()
         
         with torch.no_grad():
             pred = self.matching_sg({'image0': t1, 'image1': t2})
-        
+            
         if self.device.type == 'cuda': torch.cuda.synchronize()
         elapsed = time.time() - t0
         
@@ -103,18 +96,20 @@ class FeatureMatcher:
         matches = pred['matches0'][0].cpu().numpy()
         
         valid = matches > -1
-        pts1 = kp0[valid]
-        pts2 = kp1[matches[valid]]
-        
-        return pts1, pts2, elapsed
-    
+        # 💡 640px 해상도 좌표 그대로 반환
+        return kp0[valid], kp1[matches[valid]], elapsed
+
     def match_lightglue(self, img1_path, img2_path):
-        """SP + LightGlue (load_image 대신 cv2 사용으로 좌표계 통일)"""
-        img1 = cv2.imread(img1_path, cv2.IMREAD_GRAYSCALE)
-        img2 = cv2.imread(img2_path, cv2.IMREAD_GRAYSCALE)
+        img1_orig = cv2.imread(img1_path, cv2.IMREAD_GRAYSCALE)
+        img2_orig = cv2.imread(img2_path, cv2.IMREAD_GRAYSCALE)
         
-        t1 = torch.from_numpy(img1/255.).float()[None, None].to(self.device)
-        t2 = torch.from_numpy(img2/255.).float()[None, None].to(self.device)
+        scale1 = 640.0 / max(img1_orig.shape[:2])
+        scale2 = 640.0 / max(img2_orig.shape[:2])
+        img1_scaled = cv2.resize(img1_orig, (int(img1_orig.shape[1]*scale1), int(img1_orig.shape[0]*scale1)))
+        img2_scaled = cv2.resize(img2_orig, (int(img2_orig.shape[1]*scale2), int(img2_orig.shape[0]*scale2)))
+        
+        t1 = torch.from_numpy(img1_scaled/255.).float()[None, None].to(self.device)
+        t2 = torch.from_numpy(img2_scaled/255.).float()[None, None].to(self.device)
         
         if self.device.type == 'cuda': torch.cuda.synchronize()
         t0 = time.time()
@@ -122,15 +117,14 @@ class FeatureMatcher:
         with torch.no_grad():
             f0 = self.extractor_sp({'image': t1})
             f1 = self.extractor_sp({'image': t2})
-            # LightGlue 매칭용 딕셔너리 구성
             m01 = self.matcher_lg({'image0': f0, 'image1': f1})
             f0, f1, m01 = [rbd(x) for x in [f0, f1, m01]]
-        
+            
         if self.device.type == 'cuda': torch.cuda.synchronize()
         elapsed = time.time() - t0
         
         mt = m01['matches']
+        # 💡 640px 해상도 좌표 그대로 반환
         pts1 = f0['keypoints'][mt[...,0]].cpu().numpy()
         pts2 = f1['keypoints'][mt[...,1]].cpu().numpy()
-        
         return pts1, pts2, elapsed
