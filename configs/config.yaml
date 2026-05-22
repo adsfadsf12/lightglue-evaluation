@@ -1,0 +1,25 @@
+# 데이터 경로
+data:
+  v_poster: ./data/v_poster
+  illumination: ./data/illumination_change
+  kitti: ./data/kitti 
+# 모델 설정
+models:
+  superpoint:
+    max_keypoints: 2048
+  lightglue:
+    features: superpoint
+  superglue:
+    weights: outdoor
+    match_threshold: 0.2
+
+# 평가 설정
+evaluation:
+  resize_to: 480
+  num_warmup: 3
+  show_images: false
+
+# 출력
+output:
+  dir: ./outputs
+  save_images: true
