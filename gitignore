@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# 결과 파일
+outputs/
+*.png.tmp
+/tmp/
+*.log
+
+# 대용량 데이터 (제외)
+data/kitti/
+data/wxBS/
+
+# 모델 체크포인트
+models/SuperGlue/
+*.pth
+*.ckpt
+*.weights
+
+# OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
