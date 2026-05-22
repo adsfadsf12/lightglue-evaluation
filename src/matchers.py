@@ -33,16 +33,22 @@ class FeatureMatcher:
             self.matching_sg = None
     
     def match_nn(self, img1_path, img2_path):
-        """SP + NN (Nearest Neighbor + mutual check)"""
-        i1 = load_image(img1_path).to(self.device)
-        i2 = load_image(img2_path).to(self.device)
+        """SP + NN (load_image 대신 cv2 사용으로 좌표계 통일)"""
+        # SuperGlue와 동일하게 cv2로 읽고 텐서 변환
+        img1 = cv2.imread(img1_path, cv2.IMREAD_GRAYSCALE)
+        img2 = cv2.imread(img2_path, cv2.IMREAD_GRAYSCALE)
+        
+        # SuperPoint 입력을 위한 텐서 정규화 (1, 1, H, W)
+        t1 = torch.from_numpy(img1/255.).float()[None, None].to(self.device)
+        t2 = torch.from_numpy(img2/255.).float()[None, None].to(self.device)
         
         if self.device.type == 'cuda': torch.cuda.synchronize()
         t0 = time.time()
         
         with torch.no_grad():
-            f0 = self.extractor_sp.extract(i1)
-            f1 = self.extractor_sp.extract(i2)
+            # LightGlue의 SuperPoint 추출기는 딕셔너리 입력을 받으므로 변조
+            f0 = self.extractor_sp({'image': t1})
+            f1 = self.extractor_sp({'image': t2})
             f0, f1 = rbd(f0), rbd(f1)
         
         kp0 = f0['keypoints'].cpu().numpy()
@@ -50,7 +56,6 @@ class FeatureMatcher:
         desc0 = f0['descriptors'].cpu().numpy()
         desc1 = f1['descriptors'].cpu().numpy()
         
-        # (N, 256) 형태로 변환
         if desc0.ndim == 1: desc0 = desc0.reshape(1, -1)
         elif desc0.shape[0] == 256: desc0 = desc0.T
         if desc1.ndim == 1: desc1 = desc1.reshape(1, -1)
@@ -104,16 +109,20 @@ class FeatureMatcher:
         return pts1, pts2, elapsed
     
     def match_lightglue(self, img1_path, img2_path):
-        """SP + LightGlue"""
-        i1 = load_image(img1_path).to(self.device)
-        i2 = load_image(img2_path).to(self.device)
+        """SP + LightGlue (load_image 대신 cv2 사용으로 좌표계 통일)"""
+        img1 = cv2.imread(img1_path, cv2.IMREAD_GRAYSCALE)
+        img2 = cv2.imread(img2_path, cv2.IMREAD_GRAYSCALE)
+        
+        t1 = torch.from_numpy(img1/255.).float()[None, None].to(self.device)
+        t2 = torch.from_numpy(img2/255.).float()[None, None].to(self.device)
         
         if self.device.type == 'cuda': torch.cuda.synchronize()
         t0 = time.time()
         
         with torch.no_grad():
-            f0 = self.extractor_sp.extract(i1)
-            f1 = self.extractor_sp.extract(i2)
+            f0 = self.extractor_sp({'image': t1})
+            f1 = self.extractor_sp({'image': t2})
+            # LightGlue 매칭용 딕셔너리 구성
             m01 = self.matcher_lg({'image0': f0, 'image1': f1})
             f0, f1, m01 = [rbd(x) for x in [f0, f1, m01]]
         
